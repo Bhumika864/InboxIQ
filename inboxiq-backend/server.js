@@ -1,63 +1,29 @@
 
-// const express = require("express");
-// const mongoose = require("mongoose");
-// const dotenv = require("dotenv");
-// const cors = require("cors");
-// const emailRoutes = require("./routes/emailRoutes");
-
-// dotenv.config();
-// console.log("ID:", process.env.GOOGLE_CLIENT_ID);
-// console.log("SECRET:", process.env.GOOGLE_CLIENT_SECRET);
-// const app = express();
-// app.use(cors());
-// app.use(express.json());
-// app.use("/email", emailRoutes);
-// mongoose.connect(process.env.MONGO_URI)
-//   .then(() => console.log("Mongo Connected"))
-//   .catch(err => console.log(err));
-
-// app.get("/", (req, res) => {
-//   res.send("InboxIQ API running");
-// });
-
-// const authRoutes = require("./routes/authRoutes");
-// app.use("/auth", authRoutes);
-
-// app.listen(5000, () => {
-//   console.log("Server running on port 5000");
-// });
-
-
-
+require("dotenv").config();
 const express = require("express");
-const mongoose = require("mongoose");
-const dotenv = require("dotenv");
 const cors = require("cors");
-const session = require("express-session");
+const connectDB = require("./config/db");
+const { notFound, errorHandler } = require("./middleware/errorMiddleware");
+const { protect } = require("./middleware/authMiddleware");
 
-dotenv.config();
+// Connect to MongoDB
+connectDB();
 
 const app = express();
 
 // =====================
 // MIDDLEWARE
 // =====================
+
+// Enable CORS
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:5173", "http://localhost:5176"],
+  origin: ["http://localhost:3000", "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176"],
   credentials: true,
 }));
 
+// Body Parser
 app.use(express.json());
-
-app.use(session({
-  secret: process.env.SESSION_SECRET || "inboxiq_secret_key",
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    httpOnly: true,
-  },
-}));
+app.use(express.urlencoded({ extended: true }));
 
 // =====================
 // ROUTES
@@ -68,17 +34,31 @@ const emailRoutes = require("./routes/emailRoutes");
 app.use("/auth", authRoutes);
 app.use("/email", emailRoutes);
 
+// Protected route example
+app.get("/api/me", protect, (req, res) => {
+  res.json(req.user);
+});
+
+// Root Health Check
 app.get("/", (req, res) => {
-  res.send("InboxIQ API running");
+  res.json({ status: "ok", message: "InboxIQ API is running" });
 });
 
 // =====================
-// DB + SERVER
+// ERROR HANDLING
 // =====================
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log("MongoDB Connected");
-    app.listen(5000, () => console.log("Server running on http://localhost:5000"));
-  })
-  .catch((err) => console.error("Mongo error:", err));
+
+// Handle 404
+app.use(notFound);
+
+// Global Error Handler
+app.use(errorHandler);
+
+// =====================
+// SERVER SETUP
+// =====================
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server running in ${process.env.NODE_ENV || "development"} mode on http://localhost:${PORT}`);
+});

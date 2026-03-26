@@ -1,74 +1,9 @@
-// const express = require("express");
-// const router = express.Router();
-// const oauth2Client = require("../config/google");
-// const { google } = require("googleapis");
-// const User = require("../models/User");
-
-// const scopes = [
-//   "openid",
-//   "email",
-//   "https://www.googleapis.com/auth/gmail.readonly",
-//   "https://www.googleapis.com/auth/gmail.send",
-// ];
-
-// // Step 1: Redirect user to Google login
-// router.get("/google", (req, res) => {
-//   const url = oauth2Client.generateAuthUrl({
-//     access_type: "offline",
-//     scope: scopes,
-//     prompt: "consent"
-//   });
-
-//   res.redirect(url);
-// });
-
-
-// router.get("/google/callback", async (req, res) => {
-//   try {
-//     const code = req.query.code;
-
-//     const client = new google.auth.OAuth2(
-//       process.env.GOOGLE_CLIENT_ID,
-//       process.env.GOOGLE_CLIENT_SECRET,
-//       "http://localhost:5000/auth/google/callback"
-//     );
-
-//     const { tokens } = await client.getToken(code);
-
-//     const payload = JSON.parse(
-//       Buffer.from(tokens.id_token.split(".")[1], "base64").toString()
-//     );
-
-//     const userEmail = payload.email;
-
-//     await User.findOneAndUpdate(
-//       { email: userEmail },
-//       {
-//         email: userEmail,
-//         accessToken: tokens.access_token,
-//         refreshToken: tokens.refresh_token
-//       },
-//       { upsert: true, new: true }
-//     );
-
-//     console.log("User saved:", userEmail);
-
-//     res.send("Authentication successful");
-//   } catch (error) {
-//     console.error("OAUTH ERROR:", error);
-//     res.status(500).send("Auth failed");
-//   }
-// });
-// module.exports = router;
-
-
-
-
 const express = require("express");
 const router = express.Router();
-const oauth2Client = require("../config/google");
+const { oauth2Client } = require("../config/google");
 const { google } = require("googleapis");
 const User = require("../models/User");
+const jwt = require("jsonwebtoken");
 
 const scopes = [
   "openid",
@@ -76,6 +11,13 @@ const scopes = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
 ];
+
+// Helper to generate JWT
+const generateToken = (email) => {
+  return jwt.sign({ email }, process.env.JWT_SECRET || "inboxiq_jwt_secret", {
+    expiresIn: "30d",
+  });
+};
 
 // =====================
 // STEP 1: Redirect to Google Login
@@ -90,13 +32,16 @@ router.get("/google", (req, res) => {
 });
 
 // =====================
-// STEP 2: Google Callback — exchange code for tokens, save user
+// STEP 2: Google Callback — exchange code for tokens, save user, issue JWT
 // =====================
-router.get("/google/callback", async (req, res) => {
+router.get("/google/callback", async (req, res, next) => {
   try {
     const { code } = req.query;
 
-    if (!code) return res.status(400).send("No code provided");
+    if (!code) {
+      res.status(400);
+      throw new Error("No code provided");
+    }
 
     // Exchange auth code for tokens
     const { tokens } = await oauth2Client.getToken(code);
@@ -109,7 +54,7 @@ router.get("/google/callback", async (req, res) => {
     const email = data.email;
 
     // Save or update user in DB
-    await User.findOneAndUpdate(
+    const user = await User.findOneAndUpdate(
       { email },
       {
         email,
@@ -119,36 +64,24 @@ router.get("/google/callback", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // Save email in session
-    req.session.userEmail = email;
+    // Generate JWT for frontend
+    const token = generateToken(email);
 
     console.log("User logged in:", email);
 
-    // Redirect to frontend
-    res.redirect(`http://localhost:3000?email=${email}`);
+    // Redirect to frontend with token and email
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    res.redirect(`${frontendUrl}?token=${token}&email=${email}`);
   } catch (err) {
-    console.error("Auth callback error:", err);
-    res.status(500).send("Authentication failed");
+    next(err);
   }
 });
 
 // =====================
-// GET: Current logged-in user (session check)
-// =====================
-router.get("/me", (req, res) => {
-  if (req.session.userEmail) {
-    return res.json({ email: req.session.userEmail });
-  }
-  res.status(401).json({ error: "Not logged in" });
-});
-
-// =====================
-// GET: Logout
+// GET: Logout (handled on frontend, but adding endpoint for cleanup)
 // =====================
 router.get("/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.json({ message: "Logged out" });
-  });
+  res.json({ message: "Logged out. Please clear token from local storage." });
 });
 
 module.exports = router;
