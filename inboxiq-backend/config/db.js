@@ -1,13 +1,20 @@
 const mongoose = require("mongoose");
 
 const connectDB = async () => {
-  try {
-    const conn = await mongoose.connect(process.env.MONGO_URI);
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-  } catch (error) {
-    console.error(`Error connecting to MongoDB: ${error.message}`);
-    process.exit(1); // Exit process with failure
+  const mongoUri = process.env.MONGO_URI;
+  if (!mongoUri) {
+    throw new Error("MONGO_URI is required but was not provided.");
   }
+
+  mongoose.set("strictQuery", true);
+
+  const conn = await mongoose.connect(mongoUri, {
+    serverSelectionTimeoutMS: 10000,
+    maxPoolSize: 10,
+  });
+
+  console.log(`MongoDB Connected: ${conn.connection.host}`);
+  return conn;
 };
 
 module.exports = connectDB;

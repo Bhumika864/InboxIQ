@@ -15,29 +15,50 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 // =====================
 
 function extractBody(payload) {
-  if (!payload) return "";
+  if (!payload) return { text: "", html: "" };
 
   let plainText = "";
   let htmlText = "";
 
+  const decodeBase64 = (data) => {
+    if (!data) return "";
+    // Gmail uses URL-safe base64
+    const base64 = data.replace(/-/g, "+").replace(/_/g, "/");
+    return Buffer.from(base64, "base64").toString("utf-8");
+  };
+
   function walk(parts) {
     for (let part of parts) {
-      if (part.mimeType === "text/plain" && part.body?.data)
-        plainText = Buffer.from(part.body.data, "base64").toString("utf-8");
-      if (part.mimeType === "text/html" && part.body?.data)
-        htmlText = Buffer.from(part.body.data, "base64").toString("utf-8");
+      if (part.mimeType === "text/plain" && part.body?.data) {
+        plainText = decodeBase64(part.body.data);
+      }
+      if (part.mimeType === "text/html" && part.body?.data) {
+        htmlText = decodeBase64(part.body.data);
+      }
       if (part.parts) walk(part.parts);
     }
   }
 
   if (payload.parts) walk(payload.parts);
-  else if (payload.body?.data)
-    plainText = Buffer.from(payload.body.data, "base64").toString("utf-8");
+  else if (payload.mimeType === "text/plain" && payload.body?.data) {
+    plainText = decodeBase64(payload.body.data);
+  } else if (payload.mimeType === "text/html" && payload.body?.data) {
+    htmlText = decodeBase64(payload.body.data);
+  }
 
-  if (plainText && plainText.trim().length > 50) return plainText;
+  // Fallback if no parts found but data exists at root
+  if (!plainText && !htmlText && payload.body?.data) {
+    if (payload.mimeType === "text/html") {
+      htmlText = decodeBase64(payload.body.data);
+    } else {
+      plainText = decodeBase64(payload.body.data);
+    }
+  }
 
-  if (htmlText) {
-    return convert(htmlText, {
+  // If no plain text was found, convert HTML to text for the AI
+  let textForAI = plainText;
+  if (!textForAI && htmlText) {
+    textForAI = convert(htmlText, {
       wordwrap: 120,
       selectors: [
         { selector: "img", format: "skip" },
@@ -46,7 +67,7 @@ function extractBody(payload) {
     });
   }
 
-  return "";
+  return { text: textForAI || "", html: htmlText || plainText || "" };
 }
 
 function cleanEmailText(rawText) {
@@ -152,8 +173,8 @@ router.get("/sync/:email", async (req, res, next) => {
         const to = headers.find((h) => h.name === "To")?.value || "";
         const date = headers.find((h) => h.name === "Date")?.value || "";
 
-        const rawBody = extractBody(full.data.payload);
-        const body = cleanEmailText(rawBody);
+        const { text, html } = extractBody(full.data.payload);
+        const body = cleanEmailText(text);
 
         console.log(`[Sync] Embedding & Saving: ${subject.substring(0, 30)}`);
         const embedding = await embed(subject + " " + body);
@@ -169,6 +190,7 @@ router.get("/sync/:email", async (req, res, next) => {
             to,
             date,
             body,
+            html,
             embedding,
             createdAt: new Date(parseInt(full.data.internalDate)) || new Date(),
           },
@@ -334,6 +356,64 @@ router.post("/reply", async (req, res, next) => {
       subject: `Re: ${email.subject}`,
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+// =====================
+// SEND EMAIL
+// =====================
+router.post("/send", async (req, res, next) => {
+  try {
+    const { email, to, subject, body } = req.body;
+
+    if (!email || !to || !subject || !body) {
+      res.status(400);
+      throw new Error("Missing required fields (email, to, subject, body)");
+    }
+
+    const user = await User.findOne({ email });
+    if (!user || !user.refreshToken) {
+      res.status(401);
+      throw new Error("User not authenticated or refresh token missing");
+    }
+
+    const client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    client.setCredentials({ refresh_token: user.refreshToken });
+
+    const gmail = google.gmail({ version: "v1", auth: client });
+
+    // Gmail API requires the email to be base64url encoded
+    const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString("base64")}?=`;
+    const messageParts = [
+      `To: ${to}`,
+      "Content-Type: text/html; charset=utf-8",
+      "MIME-Version: 1.0",
+      `Subject: ${utf8Subject}`,
+      "",
+      body,
+    ];
+    const message = messageParts.join("\n");
+
+    const encodedMessage = Buffer.from(message)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    await gmail.users.messages.send({
+      userId: "me",
+      requestBody: {
+        raw: encodedMessage,
+      },
+    });
+
+    res.json({ message: "Email sent successfully" });
+  } catch (error) {
+    console.error("[Send] Error sending email:", error.message);
     next(error);
   }
 });

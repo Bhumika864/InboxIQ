@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import {
   Inbox,
@@ -24,10 +24,21 @@ export default function Dashboard() {
   const [aiReply, setAiReply] = useState(null);
   const [replyTone, setReplyTone] = useState("formal");
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [showPlainText, setShowPlainText] = useState(false);
+  const [showCompose, setShowCompose] = useState(false);
+  const [composeData, setComposeData] = useState({
+    to: "",
+    subject: "",
+    body: "",
+  });
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  const searchInputRef = useRef(null);
 
   const [userEmail] = useState(localStorage.getItem("email"));
   const [token] = useState(localStorage.getItem("token"));
@@ -98,10 +109,18 @@ export default function Dashboard() {
   };
 
   const askInbox = async () => {
-    if (!query || !userEmail || !token) return;
+    if (!query || !userEmail || !token) {
+      console.log("askInbox skipped: query, email or token missing", {
+        query,
+        userEmail,
+        token: !!token,
+      });
+      return;
+    }
     setIsSearching(true);
     setAiAnswer("");
     try {
+      console.log("Asking InboxIQ about:", query);
       const res = await axios.post(
         `${API_BASE_URL}/email/ask`,
         {
@@ -110,9 +129,13 @@ export default function Dashboard() {
         },
         axiosConfig,
       );
+      console.log("Answer received:", res.data.answer);
       setAiAnswer(res.data.answer);
     } catch (err) {
       console.error("Ask failed", err);
+      alert(
+        "Something went wrong with the search. Please check your connection or try again.",
+      );
     } finally {
       setIsSearching(false);
     }
@@ -139,6 +162,31 @@ export default function Dashboard() {
     }
   };
 
+  const sendEmail = async (to, subject, body) => {
+    if (!to || !subject || !body || !userEmail || !token) return;
+    setIsSendingEmail(true);
+    try {
+      await axios.post(
+        `${API_BASE_URL}/email/send`,
+        {
+          email: userEmail,
+          to,
+          subject,
+          body,
+        },
+        axiosConfig,
+      );
+      alert("Email sent successfully!");
+      setShowCompose(false);
+      setComposeData({ to: "", subject: "", body: "" });
+    } catch (err) {
+      console.error("Send email failed", err);
+      alert("Failed to send email. Please try again.");
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("email");
@@ -160,17 +208,48 @@ export default function Dashboard() {
         </div>
 
         <nav style={styles.nav}>
-          <div style={{ ...styles.navItem, ...styles.navItemActive }}>
+          <button
+            style={styles.composeButton}
+            onClick={() => {
+              setComposeData({ to: "", subject: "", body: "" });
+              setShowCompose(true);
+            }}
+          >
+            <Send size={18} />
+            <span>Compose</span>
+          </button>
+
+          <button
+            style={{
+              ...styles.navItem,
+              ...styles.navItemActive,
+              border: "none",
+              width: "100%",
+              textAlign: "left",
+            }}
+          >
             <Inbox size={18} />
             <span>Inbox</span>
-          </div>
-          <div
-            style={styles.navItem}
-            onClick={() => document.getElementById("searchInput").focus()}
+          </button>
+          <button
+            style={{
+              ...styles.navItem,
+              ...(isSearchFocused ? styles.navItemActive : {}),
+              background: isSearchFocused ? "#f3f4f6" : "none",
+              border: "none",
+              width: "100%",
+              textAlign: "left",
+            }}
+            onClick={() => {
+              console.log("Sidebar Search clicked");
+              searchInputRef.current?.focus();
+              setIsSearchFocused(true);
+              if (query) askInbox();
+            }}
           >
             <Search size={18} />
             <span>Search</span>
-          </div>
+          </button>
         </nav>
 
         <div style={styles.sidebarFooter}>
@@ -207,13 +286,19 @@ export default function Dashboard() {
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>Inbox</h2>
             <div style={styles.searchBar}>
-              <Search size={16} style={styles.searchIcon} />
+              <Search
+                size={16}
+                style={{ ...styles.searchIcon, cursor: "pointer" }}
+                onClick={askInbox}
+              />
               <input
-                id="searchInput"
+                ref={searchInputRef}
                 type="text"
                 placeholder="Ask anything about your emails..."
                 style={styles.searchInput}
                 value={query}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => setIsSearchFocused(false)}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyPress={(e) => e.key === "Enter" && askInbox()}
               />
@@ -298,7 +383,23 @@ export default function Dashboard() {
           {selectedEmail ? (
             <div style={styles.detailContainer}>
               <div style={styles.detailHeader}>
-                <h1 style={styles.detailSubject}>{selectedEmail.subject}</h1>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <h1 style={styles.detailSubject}>{selectedEmail.subject}</h1>
+                  {selectedEmail.html && (
+                    <button
+                      style={styles.toggleTextButton}
+                      onClick={() => setShowPlainText(!showPlainText)}
+                    >
+                      {showPlainText ? "Show Rich View" : "Show Plain Text"}
+                    </button>
+                  )}
+                </div>
                 <div style={styles.detailMeta}>
                   <div style={styles.metaRow}>
                     <span style={styles.metaLabel}>From:</span>
@@ -313,10 +414,59 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div
-                style={styles.detailBody}
-                dangerouslySetInnerHTML={{ __html: selectedEmail.body }}
-              />
+              <div style={styles.detailBody}>
+                {selectedEmail.html && !showPlainText ? (
+                  <iframe
+                    title="Email Content"
+                    srcDoc={`
+                      <!DOCTYPE html>
+                      <html>
+                        <head>
+                          <meta charset="UTF-8">
+                          <style>
+                            body { 
+                              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+                              line-height: 1.6; 
+                              color: #27272a;
+                              margin: 0;
+                              padding: 20px;
+                            }
+                            img { max-width: 100%; height: auto; display: block; }
+                            a { color: #8b5cf6; }
+                            * { box-sizing: border-box; }
+                          </style>
+                        </head>
+                        <body>${selectedEmail.html}</body>
+                      </html>
+                    `}
+                    style={styles.iframe}
+                    onLoad={(e) => {
+                      const iframe = e.target;
+                      try {
+                        const height =
+                          iframe.contentWindow.document.documentElement
+                            .scrollHeight;
+                        iframe.style.height = height + 50 + "px";
+                      } catch (err) {
+                        console.error("Iframe height adjustment failed:", err);
+                        iframe.style.height = "800px";
+                      }
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      padding: "20px",
+                      backgroundColor: "#f9fafb",
+                      borderRadius: "8px",
+                      fontSize: "14px",
+                    }}
+                  >
+                    {selectedEmail.body}
+                  </div>
+                )}
+              </div>
 
               <div style={styles.aiReplySection}>
                 <div style={styles.aiReplyHeader}>
@@ -360,9 +510,19 @@ export default function Dashboard() {
                       >
                         Copy to Clipboard
                       </button>
-                      <button style={styles.sendButton}>
+                      <button
+                        style={styles.sendButton}
+                        onClick={() =>
+                          sendEmail(
+                            aiReply.replyTo,
+                            aiReply.subject,
+                            aiReply.reply,
+                          )
+                        }
+                        disabled={isSendingEmail}
+                      >
                         <Send size={14} />
-                        Send Reply
+                        {isSendingEmail ? "Sending..." : "Send Reply"}
                       </button>
                     </div>
                   </div>
@@ -377,6 +537,66 @@ export default function Dashboard() {
           )}
         </section>
       </main>
+
+      {/* COMPOSE MODAL */}
+      {showCompose && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <div style={styles.modalHeader}>
+              <h3 style={styles.modalTitle}>New Message</h3>
+              <button
+                style={styles.closeModal}
+                onClick={() => setShowCompose(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={styles.modalBody}>
+              <input
+                type="text"
+                placeholder="To"
+                style={styles.modalInput}
+                value={composeData.to}
+                onChange={(e) =>
+                  setComposeData({ ...composeData, to: e.target.value })
+                }
+              />
+              <input
+                type="text"
+                placeholder="Subject"
+                style={styles.modalInput}
+                value={composeData.subject}
+                onChange={(e) =>
+                  setComposeData({ ...composeData, subject: e.target.value })
+                }
+              />
+              <textarea
+                placeholder="Message..."
+                style={styles.modalTextarea}
+                value={composeData.body}
+                onChange={(e) =>
+                  setComposeData({ ...composeData, body: e.target.value })
+                }
+              />
+            </div>
+            <div style={styles.modalFooter}>
+              <button
+                style={styles.modalSendButton}
+                onClick={() =>
+                  sendEmail(
+                    composeData.to,
+                    composeData.subject,
+                    composeData.body,
+                  )
+                }
+                disabled={isSendingEmail}
+              >
+                {isSendingEmail ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes spin {
@@ -422,6 +642,22 @@ const styles = {
   nav: {
     flex: 1,
   },
+  composeButton: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+    padding: "12px",
+    backgroundColor: "#18181b",
+    color: "white",
+    borderRadius: "12px",
+    fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
+    marginBottom: "24px",
+    transition: "all 0.2s",
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+  },
   navItem: {
     display: "flex",
     alignItems: "center",
@@ -434,10 +670,13 @@ const styles = {
     cursor: "pointer",
     transition: "all 0.2s",
     marginBottom: "4px",
+    background: "none",
+    border: "none",
   },
   navItemActive: {
     backgroundColor: "#f3f4f6",
     color: "#18181b",
+    fontWeight: "600",
   },
   sidebarFooter: {
     marginTop: "auto",
@@ -642,6 +881,17 @@ const styles = {
     fontWeight: "800",
     margin: "0 0 20px 0",
     letterSpacing: "-0.02em",
+    flex: 1,
+  },
+  toggleTextButton: {
+    padding: "6px 12px",
+    backgroundColor: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: "600",
+    cursor: "pointer",
+    marginLeft: "16px",
   },
   detailMeta: {
     display: "flex",
@@ -666,7 +916,11 @@ const styles = {
     lineHeight: "1.6",
     color: "#27272a",
     marginBottom: "40px",
-    whiteSpace: "pre-wrap",
+  },
+  iframe: {
+    width: "100%",
+    border: "none",
+    overflow: "hidden",
   },
   aiReplySection: {
     border: "1px solid #e5e7eb",
@@ -749,6 +1003,85 @@ const styles = {
     border: "none",
     borderRadius: "6px",
     fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  modalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+  },
+  modalContent: {
+    backgroundColor: "white",
+    width: "100%",
+    maxWidth: "500px",
+    borderRadius: "12px",
+    display: "flex",
+    flexDirection: "column",
+    boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)",
+  },
+  modalHeader: {
+    padding: "16px 20px",
+    borderBottom: "1px solid #e5e7eb",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: "600",
+  },
+  closeModal: {
+    background: "none",
+    border: "none",
+    fontSize: "18px",
+    cursor: "pointer",
+    color: "#9ca3af",
+  },
+  modalBody: {
+    padding: "20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  modalInput: {
+    padding: "10px",
+    border: "1px solid #e5e7eb",
+    borderRadius: "6px",
+    fontSize: "14px",
+    outline: "none",
+  },
+  modalTextarea: {
+    padding: "10px",
+    border: "1px solid #e5e7eb",
+    borderRadius: "6px",
+    fontSize: "14px",
+    minHeight: "200px",
+    resize: "none",
+    outline: "none",
+    fontFamily: "inherit",
+  },
+  modalFooter: {
+    padding: "16px 20px",
+    borderTop: "1px solid #e5e7eb",
+    display: "flex",
+    justifyContent: "flex-end",
+  },
+  modalSendButton: {
+    padding: "8px 24px",
+    backgroundColor: "#18181b",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "14px",
     fontWeight: "600",
     cursor: "pointer",
   },

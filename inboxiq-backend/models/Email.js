@@ -1,18 +1,3 @@
-// const mongoose = require("mongoose");
-
-// const emailSchema = new mongoose.Schema({
-//   userEmail: String,
-//   messageId: String,
-//   threadId: String,
-//   subject: String,
-//   body: String,
-//   embedding: [Number],
-//   createdAt: Date
-// });
-
-// module.exports = mongoose.model("Email", emailSchema);
-
-
 const mongoose = require("mongoose");
 
 const emailSchema = new mongoose.Schema({
@@ -24,6 +9,7 @@ const emailSchema = new mongoose.Schema({
   to: String,
   date: String,
   body: String,
+  html: String,
   embedding: [Number],
   createdAt: Date,
 });
