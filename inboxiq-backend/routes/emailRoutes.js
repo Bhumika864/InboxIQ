@@ -70,6 +70,28 @@ function extractBody(payload) {
   return { text: textForAI || "", html: htmlText || plainText || "" };
 }
 
+function extractAttachments(payload) {
+  const attachments = [];
+
+  function walk(parts) {
+    for (let part of parts) {
+      if (part.filename && part.body?.attachmentId) {
+        attachments.push({
+          attachmentId: part.body.attachmentId,
+          filename: part.filename,
+          mimeType: part.mimeType,
+          size: part.body.size,
+        });
+      }
+      if (part.parts) walk(part.parts);
+    }
+  }
+
+  if (payload.parts) walk(payload.parts);
+
+  return attachments;
+}
+
 function cleanEmailText(rawText) {
   if (!rawText) return "";
   return rawText
@@ -87,6 +109,30 @@ function cosineSimilarity(a, b) {
   const normA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
   const normB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
   return dot / (normA * normB);
+}
+
+async function categorizeEmail(subject, body) {
+  try {
+    const completion = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an email categorization AI. Classify the email into one of these categories: Important, Promotions, Social, Newsletters, Spam, Uncategorized. Respond with only the category name.",
+        },
+        {
+          role: "user",
+          content: `Subject: ${subject}\n\nBody: ${body.slice(0, 500)}`,
+        },
+      ],
+      temperature: 0,
+    });
+    return completion.choices[0].message.content.trim();
+  } catch (error) {
+    console.error("[Categorize] Error categorizing email:", error.message);
+    return "Uncategorized"; // Fallback category
+  }
 }
 
 // =====================
@@ -146,6 +192,7 @@ router.get("/sync/:email", async (req, res, next) => {
       list = await gmail.users.messages.list({
         userId: "me",
         maxResults: 100,
+        q: "label:INBOX OR label:SENT",
       });
     } catch (gmailError) {
       console.error(`[Sync] Gmail API list error:`, gmailError.message);
@@ -173,11 +220,15 @@ router.get("/sync/:email", async (req, res, next) => {
         const to = headers.find((h) => h.name === "To")?.value || "";
         const date = headers.find((h) => h.name === "Date")?.value || "";
 
+        const isSent = full.data.labelIds?.includes("SENT") || from.includes(userEmail);
+
         const { text, html } = extractBody(full.data.payload);
         const body = cleanEmailText(text);
+        const attachments = extractAttachments(full.data.payload);
 
         console.log(`[Sync] Embedding & Saving: ${subject.substring(0, 30)}`);
         const embedding = await embed(subject + " " + body);
+        const category = await categorizeEmail(subject, body);
 
         await Email.updateOne(
           { messageId: msg.id },
@@ -189,9 +240,12 @@ router.get("/sync/:email", async (req, res, next) => {
             from,
             to,
             date,
+            category,
+            isSent,
             body,
             html,
             embedding,
+            attachments,
             createdAt: new Date(parseInt(full.data.internalDate)) || new Date(),
           },
           { upsert: true }
@@ -274,7 +328,7 @@ router.post("/ask", async (req, res, next) => {
         score: cosineSimilarity(questionEmbedding, e.embedding),
       }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
+      .slice(0, 5);
 
     const context = scored
       .map(
@@ -404,16 +458,188 @@ router.post("/send", async (req, res, next) => {
       .replace(/\//g, "_")
       .replace(/=+$/, "");
 
-    await gmail.users.messages.send({
+    const sentMessage = await gmail.users.messages.send({
       userId: "me",
       requestBody: {
         raw: encodedMessage,
       },
     });
 
-    res.json({ message: "Email sent successfully" });
+    // Save to local database immediately so it shows in the "Sent" section
+    const embedding = await embed(subject + " " + body);
+    const category = await categorizeEmail(subject, body);
+
+    await Email.create({
+      userEmail: email,
+      messageId: sentMessage.data.id,
+      threadId: sentMessage.data.threadId,
+      subject,
+      from: email, // Sender is the user
+      to,
+      date: new Date().toUTCString(),
+      category,
+      isSent: true,
+      body,
+      html: body, // Assuming HTML body for simplicity
+      embedding,
+      createdAt: new Date(),
+    });
+
+    res.json({ message: "Email sent successfully", messageId: sentMessage.data.id });
   } catch (error) {
     console.error("[Send] Error sending email:", error.message);
+    next(error);
+  }
+});
+
+// =====================
+// SAVE AS DRAFT
+// =====================
+router.post("/draft", async (req, res, next) => {
+  try {
+    const { email, to, subject, body } = req.body;
+
+    if (!email || !to || !subject || !body) {
+      res.status(400);
+      throw new Error("Missing required fields (email, to, subject, body)");
+    }
+
+    const user = await User.findOne({ email });
+    if (!user || !user.refreshToken) {
+      res.status(401);
+      throw new Error("User not authenticated or refresh token missing");
+    }
+
+    const client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    client.setCredentials({ refresh_token: user.refreshToken });
+
+    const gmail = google.gmail({ version: "v1", auth: client });
+
+    const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString("base64")}?=`;
+    const messageParts = [
+      `To: ${to}`,
+      "Content-Type: text/html; charset=utf-8",
+      "MIME-Version: 1.0",
+      `Subject: ${utf8Subject}`,
+      "",
+      body,
+    ];
+    const message = messageParts.join("\n");
+
+    const encodedMessage = Buffer.from(message)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    await gmail.users.drafts.create({
+      userId: "me",
+      requestBody: {
+        message: {
+          raw: encodedMessage,
+        },
+      },
+    });
+
+    res.json({ message: "Draft saved successfully" });
+  } catch (error) {
+    console.error("[Draft] Error saving draft:", error.message);
+    next(error);
+  }
+});
+
+// =====================
+// GET ATTACHMENT
+// =====================
+router.get("/attachment/:messageId/:attachmentId", async (req, res, next) => {
+  try {
+    const { messageId, attachmentId } = req.params;
+    const userEmail = req.query.email;
+
+    if (!userEmail) {
+      res.status(400);
+      throw new Error("Missing user email");
+    }
+
+    const user = await User.findOne({ email: userEmail });
+    if (!user || !user.refreshToken) {
+      res.status(401);
+      throw new Error("User not authenticated or refresh token missing");
+    }
+
+    const client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    client.setCredentials({ refresh_token: user.refreshToken });
+
+    const gmail = google.gmail({ version: "v1", auth: client });
+
+    const attachment = await gmail.users.messages.attachments.get({
+      userId: "me",
+      messageId: messageId,
+      id: attachmentId,
+    });
+
+    res.json({ data: attachment.data.data });
+  } catch (error) {
+    console.error("[Attachment] Error fetching attachment:", error.message);
+    next(error);
+  }
+});
+
+// =====================
+// BULK ACTIONS
+// =====================
+router.post("/bulk-action", async (req, res, next) => {
+  try {
+    const { email, action, messageIds } = req.body;
+
+    if (!email || !action || !messageIds || !messageIds.length) {
+      res.status(400);
+      throw new Error("Missing required fields");
+    }
+
+    const user = await User.findOne({ email });
+    if (!user || !user.refreshToken) {
+      res.status(401);
+      throw new Error("User not authenticated");
+    }
+
+    const client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    client.setCredentials({ refresh_token: user.refreshToken });
+
+    const gmail = google.gmail({ version: "v1", auth: client });
+
+    if (action === "archive") {
+      await gmail.users.messages.batchModify({
+        userId: "me",
+        requestBody: {
+          ids: messageIds,
+          removeLabelIds: ["INBOX"],
+        },
+      });
+    } else if (action === "delete") {
+      await gmail.users.messages.batchDelete({
+        userId: "me",
+        requestBody: {
+          ids: messageIds,
+        },
+      });
+    }
+
+    // Also update our local DB
+    await Email.deleteMany({ messageId: { $in: messageIds } });
+
+    res.json({ message: `Successfully performed ${action} on ${messageIds.length} emails.` });
+  } catch (error) {
+    console.error(`[Bulk Action] Error:`, error.message);
     next(error);
   }
 });

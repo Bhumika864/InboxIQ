@@ -18,6 +18,8 @@ const API_BASE_URL = "http://localhost:5000";
 export default function Dashboard() {
   const [emails, setEmails] = useState([]);
   const [selectedEmail, setSelectedEmail] = useState(null);
+  const [selectedEmails, setSelectedEmails] = useState([]);
+  const [activeCategory, setActiveCategory] = useState("All");
   const [query, setQuery] = useState("");
   const [isSyncing, setIsSyncing] = useState(false);
   const [aiAnswer, setAiAnswer] = useState("");
@@ -25,8 +27,11 @@ export default function Dashboard() {
   const [replyTone, setReplyTone] = useState("formal");
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [view, setView] = useState("inbox"); // 'inbox' or 'search'
+  const [searchResults, setSearchResults] = useState([]);
   const [showPlainText, setShowPlainText] = useState(false);
   const [showCompose, setShowCompose] = useState(false);
   const [composeData, setComposeData] = useState({
@@ -119,6 +124,7 @@ export default function Dashboard() {
     }
     setIsSearching(true);
     setAiAnswer("");
+    setSearchResults([]);
     try {
       console.log("Asking InboxIQ about:", query);
       const res = await axios.post(
@@ -131,6 +137,7 @@ export default function Dashboard() {
       );
       console.log("Answer received:", res.data.answer);
       setAiAnswer(res.data.answer);
+      setSearchResults(res.data.matchedEmails || []);
     } catch (err) {
       console.error("Ask failed", err);
       alert(
@@ -179,6 +186,7 @@ export default function Dashboard() {
       alert("Email sent successfully!");
       setShowCompose(false);
       setComposeData({ to: "", subject: "", body: "" });
+      fetchEmails(1, false);
     } catch (err) {
       console.error("Send email failed", err);
       alert("Failed to send email. Please try again.");
@@ -187,10 +195,122 @@ export default function Dashboard() {
     }
   };
 
+  const saveDraft = async (to, subject, body) => {
+    if (!to || !subject || !body || !userEmail || !token) return;
+    setIsSavingDraft(true);
+    try {
+      await axios.post(
+        `${API_BASE_URL}/email/draft`,
+        {
+          email: userEmail,
+          to,
+          subject,
+          body,
+        },
+        axiosConfig,
+      );
+      alert("Draft saved to Gmail!");
+      setShowCompose(false);
+      setComposeData({ to: "", subject: "", body: "" });
+    } catch (err) {
+      console.error("Save draft failed", err);
+      alert("Failed to save draft. Please try again.");
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
+  const downloadAttachment = async (messageId, attachmentId, filename) => {
+    try {
+      const res = await axios.get(
+        `${API_BASE_URL}/email/attachment/${messageId}/${attachmentId}?email=${userEmail}`,
+        axiosConfig,
+      );
+
+      // Gmail uses URL-safe base64
+      const base64Data = res.data.data.replace(/-/g, "+").replace(/_/g, "/");
+      const binaryData = atob(base64Data);
+      const arrayBuffer = new Uint8Array(binaryData.length);
+      for (let i = 0; i < binaryData.length; i++) {
+        arrayBuffer[i] = binaryData.charCodeAt(i);
+      }
+
+      const blob = new Blob([arrayBuffer]);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error("Download failed", err);
+      alert("Failed to download attachment.");
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("email");
     window.location.href = "/login";
+  };
+
+  const filteredEmails = emails.filter((e) => {
+    // First filter by section (Inbox vs Sent)
+    if (view === "inbox" && e.isSent) return false;
+    if (view === "sent" && !e.isSent) return false;
+
+    // Then filter by category
+    if (activeCategory === "All") return true;
+    return e.category === activeCategory;
+  });
+
+  const handleBulkAction = async (action) => {
+    if (!selectedEmails.length || !userEmail || !token) return;
+    try {
+      await axios.post(
+        `${API_BASE_URL}/email/bulk-action`,
+        {
+          email: userEmail,
+          action,
+          messageIds: selectedEmails,
+        },
+        axiosConfig,
+      );
+
+      // Remove from local state
+      setEmails((prev) =>
+        prev.filter((e) => !selectedEmails.includes(e.messageId)),
+      );
+      setSelectedEmails([]);
+      if (selectedEmail && selectedEmails.includes(selectedEmail.messageId)) {
+        setSelectedEmail(null);
+      }
+      alert(`Successfully ${action}d ${selectedEmails.length} emails.`);
+    } catch (err) {
+      console.error(`Bulk ${action} failed`, err);
+      alert(`Failed to ${action} emails.`);
+    }
+  };
+
+  const toggleEmailSelection = (messageId, e) => {
+    e.stopPropagation();
+    setSelectedEmails((prev) =>
+      prev.includes(messageId)
+        ? prev.filter((id) => id !== messageId)
+        : [...prev, messageId],
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (
+      selectedEmails.length === filteredEmails.length &&
+      filteredEmails.length > 0
+    ) {
+      setSelectedEmails([]);
+    } else {
+      setSelectedEmails(filteredEmails.map((e) => e.messageId));
+    }
   };
 
   useEffect(() => {
@@ -222,11 +342,12 @@ export default function Dashboard() {
           <button
             style={{
               ...styles.navItem,
-              ...styles.navItemActive,
+              ...(view === "inbox" ? styles.navItemActive : {}),
               border: "none",
               width: "100%",
               textAlign: "left",
             }}
+            onClick={() => setView("inbox")}
           >
             <Inbox size={18} />
             <span>Inbox</span>
@@ -234,17 +355,29 @@ export default function Dashboard() {
           <button
             style={{
               ...styles.navItem,
-              ...(isSearchFocused ? styles.navItemActive : {}),
-              background: isSearchFocused ? "#f3f4f6" : "none",
+              ...(view === "sent" ? styles.navItemActive : {}),
+              border: "none",
+              width: "100%",
+              textAlign: "left",
+            }}
+            onClick={() => setView("sent")}
+          >
+            <Send size={18} />
+            <span>Sent</span>
+          </button>
+          <button
+            style={{
+              ...styles.navItem,
+              ...(view === "search" ? styles.navItemActive : {}),
+              background: view === "search" ? "#f3f4f6" : "none",
               border: "none",
               width: "100%",
               textAlign: "left",
             }}
             onClick={() => {
               console.log("Sidebar Search clicked");
-              searchInputRef.current?.focus();
-              setIsSearchFocused(true);
-              if (query) askInbox();
+              setView("search");
+              setTimeout(() => searchInputRef.current?.focus(), 100);
             }}
           >
             <Search size={18} />
@@ -281,144 +414,271 @@ export default function Dashboard() {
 
       {/* MAIN CONTENT */}
       <main style={styles.main}>
-        {/* EMAIL LIST */}
-        <section style={styles.listSection}>
-          <div style={styles.sectionHeader}>
-            <h2 style={styles.sectionTitle}>Inbox</h2>
-            <div style={styles.searchBar}>
-              <Search
-                size={16}
-                style={{ ...styles.searchIcon, cursor: "pointer" }}
-                onClick={askInbox}
-              />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="Ask anything about your emails..."
-                style={styles.searchInput}
-                value={query}
-                onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setIsSearchFocused(false)}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && askInbox()}
-              />
-              {isSearching && (
-                <RefreshCw
-                  size={14}
-                  className="spin"
-                  style={{ marginRight: 8 }}
-                />
-              )}
-            </div>
-          </div>
-
-          {aiAnswer && (
-            <div style={styles.aiAnswerCard}>
-              <div style={styles.aiAnswerHeader}>
-                <Sparkles size={16} color="#8b5cf6" />
-                <span>InboxIQ Answer</span>
-              </div>
-              <p style={styles.aiAnswerText}>{aiAnswer}</p>
-              <button
-                style={styles.closeAiAnswer}
-                onClick={() => setAiAnswer("")}
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          <div style={styles.emailList} onScroll={handleScroll}>
-            {emails.length === 0 ? (
-              <div style={styles.emptyState}>
-                No emails found. Sync to get started.
-              </div>
-            ) : (
-              <>
-                {emails.map((email) => (
-                  <div
-                    key={email._id}
-                    style={{
-                      ...styles.emailItem,
-                      ...(selectedEmail?._id === email._id
-                        ? styles.emailItemActive
-                        : {}),
-                    }}
-                    onClick={() => {
-                      setSelectedEmail(email);
-                      setAiReply(null);
-                    }}
-                  >
-                    <div style={styles.emailItemHeader}>
-                      <span style={styles.emailFrom}>
-                        {email.from?.split("<")[0] || email.from}
-                      </span>
-                      <span style={styles.emailDate}>
-                        {new Date(email.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <div style={styles.emailSubject}>{email.subject}</div>
-                    <div style={styles.emailSnippet}>
-                      {email.body?.substring(0, 100).replace(/<[^>]*>/g, "")}...
-                    </div>
-                  </div>
-                ))}
-                {isLoadingMore && (
-                  <div style={{ ...styles.emptyState, padding: "20px" }}>
-                    <RefreshCw size={16} className="spin" />
-                  </div>
-                )}
-                {!hasMore && emails.length > 0 && (
-                  <div style={{ ...styles.emptyState, padding: "20px" }}>
-                    End of inbox
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </section>
-
-        {/* EMAIL DETAIL */}
-        <section style={styles.detailSection}>
-          {selectedEmail ? (
-            <div style={styles.detailContainer}>
-              <div style={styles.detailHeader}>
+        {view === "inbox" || view === "sent" ? (
+          <>
+            {/* EMAIL LIST */}
+            <section style={styles.listSection}>
+              <div style={styles.sectionHeader}>
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
-                    alignItems: "flex-start",
+                    alignItems: "center",
+                    marginBottom: "16px",
                   }}
                 >
-                  <h1 style={styles.detailSubject}>{selectedEmail.subject}</h1>
-                  {selectedEmail.html && (
-                    <button
-                      style={styles.toggleTextButton}
-                      onClick={() => setShowPlainText(!showPlainText)}
-                    >
-                      {showPlainText ? "Show Rich View" : "Show Plain Text"}
-                    </button>
+                  <h2 style={{ ...styles.sectionTitle, margin: 0 }}>
+                    {view === "inbox" ? "Inbox" : "Sent"}
+                  </h2>
+                  {selectedEmails.length > 0 && (
+                    <div style={styles.bulkActionBar}>
+                      <span style={styles.bulkActionText}>
+                        {selectedEmails.length} selected
+                      </span>
+                      <button
+                        style={styles.bulkActionButton}
+                        onClick={() => handleBulkAction("archive")}
+                      >
+                        Archive
+                      </button>
+                      <button
+                        style={{ ...styles.bulkActionButton, color: "#ef4444" }}
+                        onClick={() => handleBulkAction("delete")}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   )}
                 </div>
-                <div style={styles.detailMeta}>
-                  <div style={styles.metaRow}>
-                    <span style={styles.metaLabel}>From:</span>
-                    <span style={styles.metaValue}>{selectedEmail.from}</span>
-                  </div>
-                  <div style={styles.metaRow}>
-                    <span style={styles.metaLabel}>Date:</span>
-                    <span style={styles.metaValue}>
-                      {new Date(selectedEmail.createdAt).toLocaleString()}
-                    </span>
-                  </div>
+                <div style={styles.searchBar}>
+                  <Search
+                    size={16}
+                    style={{ ...styles.searchIcon, cursor: "pointer" }}
+                    onClick={askInbox}
+                  />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    placeholder="Ask anything about your emails..."
+                    style={styles.searchInput}
+                    value={query}
+                    onFocus={() => setIsSearchFocused(true)}
+                    onBlur={() => setIsSearchFocused(false)}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && askInbox()}
+                  />
+                  {isSearching && (
+                    <RefreshCw
+                      size={14}
+                      className="spin"
+                      style={{ marginRight: 8 }}
+                    />
+                  )}
                 </div>
               </div>
 
-              <div style={styles.detailBody}>
-                {selectedEmail.html && !showPlainText ? (
-                  <iframe
-                    title="Email Content"
-                    srcDoc={`
+              <div style={styles.categoryFilters}>
+                {[
+                  "All",
+                  "Important",
+                  "Promotions",
+                  "Social",
+                  "Newsletters",
+                ].map((cat) => (
+                  <button
+                    key={cat}
+                    style={{
+                      ...styles.categoryBtn,
+                      ...(activeCategory === cat
+                        ? styles.categoryBtnActive
+                        : {}),
+                    }}
+                    onClick={() => setActiveCategory(cat)}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {aiAnswer && (
+                <div style={styles.aiAnswerCard}>
+                  <div style={styles.aiAnswerHeader}>
+                    <Sparkles size={16} color="#8b5cf6" />
+                    <span>InboxIQ Answer</span>
+                  </div>
+                  <p style={styles.aiAnswerText}>{aiAnswer}</p>
+                  <button
+                    style={styles.closeAiAnswer}
+                    onClick={() => {
+                      setAiAnswer("");
+                      setSearchResults([]);
+                    }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              <div style={styles.emailList} onScroll={handleScroll}>
+                {filteredEmails.length > 0 && (
+                  <div style={styles.selectAllContainer}>
+                    <input
+                      type="checkbox"
+                      checked={
+                        selectedEmails.length === filteredEmails.length &&
+                        filteredEmails.length > 0
+                      }
+                      onChange={toggleSelectAll}
+                      style={styles.checkbox}
+                    />
+                    <span style={styles.selectAllText}>Select All</span>
+                  </div>
+                )}
+                {filteredEmails.length === 0 ? (
+                  <div style={styles.emptyState}>
+                    No emails found in this category.
+                  </div>
+                ) : (
+                  <>
+                    {filteredEmails.map((email) => (
+                      <div
+                        key={email._id}
+                        style={{
+                          ...styles.emailItem,
+                          ...(selectedEmail?._id === email._id
+                            ? styles.emailItemActive
+                            : {}),
+                          ...(selectedEmails.includes(email.messageId)
+                            ? styles.emailItemSelected
+                            : {}),
+                        }}
+                        onClick={() => {
+                          setSelectedEmail(email);
+                          setAiReply(null);
+                        }}
+                      >
+                        <div style={styles.emailItemHeader}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedEmails.includes(email.messageId)}
+                              onChange={(e) =>
+                                toggleEmailSelection(email.messageId, e)
+                              }
+                              onClick={(e) => e.stopPropagation()}
+                              style={styles.checkbox}
+                            />
+                            <span style={styles.emailFrom}>
+                              {email.from?.split("<")[0] || email.from}
+                            </span>
+                          </div>
+                          <span style={styles.emailDate}>
+                            {new Date(email.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div style={styles.emailSubject}>
+                          {email.category &&
+                            email.category !== "Uncategorized" && (
+                              <span style={styles.categoryTag}>
+                                {email.category}
+                              </span>
+                            )}
+                          {email.subject}
+                        </div>
+                        <div style={styles.emailSnippet}>
+                          {email.body
+                            ?.substring(0, 100)
+                            .replace(/<[^>]*>/g, "")}
+                          ...
+                        </div>
+                      </div>
+                    ))}
+                    {isLoadingMore && (
+                      <div style={{ ...styles.emptyState, padding: "20px" }}>
+                        <RefreshCw size={16} className="spin" />
+                      </div>
+                    )}
+                    {!hasMore && emails.length > 0 && (
+                      <div style={{ ...styles.emptyState, padding: "20px" }}>
+                        End of inbox
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </section>
+
+            {/* EMAIL DETAIL */}
+            <section style={styles.detailSection}>
+              {selectedEmail ? (
+                <div style={styles.detailContainer}>
+                  <div style={styles.detailHeader}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                      }}
+                    >
+                      <h1 style={styles.detailSubject}>
+                        {selectedEmail.subject}
+                      </h1>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        {selectedEmail.from?.includes(userEmail) && (
+                          <button
+                            style={styles.resendButton}
+                            onClick={() => {
+                              setComposeData({
+                                to: selectedEmail.to || "",
+                                subject: selectedEmail.subject,
+                                body: selectedEmail.body,
+                              });
+                              setShowCompose(true);
+                            }}
+                          >
+                            <RefreshCw size={14} />
+                            Resend
+                          </button>
+                        )}
+                        {selectedEmail.html && (
+                          <button
+                            style={styles.toggleTextButton}
+                            onClick={() => setShowPlainText(!showPlainText)}
+                          >
+                            {showPlainText
+                              ? "Show Rich View"
+                              : "Show Plain Text"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div style={styles.detailMeta}>
+                      <div style={styles.metaRow}>
+                        <span style={styles.metaLabel}>From:</span>
+                        <span style={styles.metaValue}>
+                          {selectedEmail.from}
+                        </span>
+                      </div>
+                      <div style={styles.metaRow}>
+                        <span style={styles.metaLabel}>Date:</span>
+                        <span style={styles.metaValue}>
+                          {new Date(selectedEmail.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={styles.detailBody}>
+                    {selectedEmail.html && !showPlainText ? (
+                      <iframe
+                        title="Email Content"
+                        srcDoc={`
                       <!DOCTYPE html>
                       <html>
                         <head>
@@ -439,103 +699,248 @@ export default function Dashboard() {
                         <body>${selectedEmail.html}</body>
                       </html>
                     `}
-                    style={styles.iframe}
-                    onLoad={(e) => {
-                      const iframe = e.target;
-                      try {
-                        const height =
-                          iframe.contentWindow.document.documentElement
-                            .scrollHeight;
-                        iframe.style.height = height + 50 + "px";
-                      } catch (err) {
-                        console.error("Iframe height adjustment failed:", err);
-                        iframe.style.height = "800px";
-                      }
-                    }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      padding: "20px",
-                      backgroundColor: "#f9fafb",
-                      borderRadius: "8px",
-                      fontSize: "14px",
-                    }}
-                  >
-                    {selectedEmail.body}
+                        style={styles.iframe}
+                        onLoad={(e) => {
+                          const iframe = e.target;
+                          try {
+                            const height =
+                              iframe.contentWindow.document.documentElement
+                                .scrollHeight;
+                            iframe.style.height = height + 50 + "px";
+                          } catch (err) {
+                            console.error(
+                              "Iframe height adjustment failed:",
+                              err,
+                            );
+                            iframe.style.height = "800px";
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          padding: "20px",
+                          backgroundColor: "#f9fafb",
+                          borderRadius: "8px",
+                          fontSize: "14px",
+                        }}
+                      >
+                        {selectedEmail.body}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              <div style={styles.aiReplySection}>
-                <div style={styles.aiReplyHeader}>
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <MessageSquareText size={18} color="#8b5cf6" />
-                    <span style={{ fontWeight: 600 }}>AI Smart Reply</span>
+                  {selectedEmail.attachments &&
+                    selectedEmail.attachments.length > 0 && (
+                      <div style={styles.attachmentsSection}>
+                        <div style={styles.attachmentsHeader}>
+                          <ChevronRight size={16} />
+                          <span>
+                            Attachments ({selectedEmail.attachments.length})
+                          </span>
+                        </div>
+                        <div style={styles.attachmentsList}>
+                          {selectedEmail.attachments.map((att) => (
+                            <div
+                              key={att.attachmentId}
+                              style={styles.attachmentItem}
+                              onClick={() =>
+                                downloadAttachment(
+                                  selectedEmail.messageId,
+                                  att.attachmentId,
+                                  att.filename,
+                                )
+                              }
+                            >
+                              <Mail size={14} />
+                              <span style={styles.attachmentName}>
+                                {att.filename}
+                              </span>
+                              <span style={styles.attachmentSize}>
+                                ({(att.size / 1024).toFixed(1)} KB)
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  <div style={styles.aiReplySection}>
+                    <div style={styles.aiReplyHeader}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <MessageSquareText size={18} color="#8b5cf6" />
+                        <span style={{ fontWeight: 600 }}>AI Smart Reply</span>
+                      </div>
+                      <div style={styles.toneSelector}>
+                        <select
+                          value={replyTone}
+                          onChange={(e) => setReplyTone(e.target.value)}
+                          style={styles.select}
+                        >
+                          <option value="formal">Formal</option>
+                          <option value="casual">Casual</option>
+                          <option value="short">Short</option>
+                          <option value="detailed">Detailed</option>
+                        </select>
+                        <button
+                          style={styles.generateButton}
+                          onClick={generateReply}
+                          disabled={isGeneratingReply}
+                        >
+                          {isGeneratingReply ? "Generating..." : "Generate"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {aiReply && (
+                      <div style={styles.aiReplyContent}>
+                        <div style={styles.replyDraftHeader}>Draft Reply</div>
+                        <pre style={styles.replyText}>{aiReply.reply}</pre>
+                        <div style={styles.replyActions}>
+                          <button
+                            style={styles.copyButton}
+                            onClick={() =>
+                              navigator.clipboard.writeText(aiReply.reply)
+                            }
+                          >
+                            Copy to Clipboard
+                          </button>
+                          <button
+                            style={styles.copyButton}
+                            onClick={() =>
+                              saveDraft(
+                                aiReply.replyTo,
+                                aiReply.subject,
+                                aiReply.reply,
+                              )
+                            }
+                            disabled={isSavingDraft}
+                          >
+                            {isSavingDraft ? "Saving..." : "Save as Draft"}
+                          </button>
+                          <button
+                            style={styles.sendButton}
+                            onClick={() =>
+                              sendEmail(
+                                aiReply.replyTo,
+                                aiReply.subject,
+                                aiReply.reply,
+                              )
+                            }
+                            disabled={isSendingEmail}
+                          >
+                            <Send size={14} />
+                            {isSendingEmail ? "Sending..." : "Send Reply"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div style={styles.toneSelector}>
-                    <select
-                      value={replyTone}
-                      onChange={(e) => setReplyTone(e.target.value)}
-                      style={styles.select}
-                    >
-                      <option value="formal">Formal</option>
-                      <option value="casual">Casual</option>
-                      <option value="short">Short</option>
-                      <option value="detailed">Detailed</option>
-                    </select>
+                </div>
+              ) : (
+                <div style={styles.detailPlaceholder}>
+                  <Mail size={48} color="#e4e4e7" />
+                  <p>Select an email to view details</p>
+                </div>
+              )}
+            </section>
+          </>
+        ) : (
+          <section style={styles.searchViewSection}>
+            <div
+              style={{
+                ...styles.searchContainer,
+                ...(searchResults.length > 0
+                  ? styles.searchContainerResults
+                  : {}),
+              }}
+            >
+              <h1 style={styles.searchViewTitle}>Semantic Search</h1>
+              <div style={styles.searchBarLarge}>
+                <Search size={20} style={styles.searchIcon} />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="Ask anything about your emails..."
+                  style={styles.searchInputLarge}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyPress={(e) => e.key === "Enter" && askInbox()}
+                />
+                <button
+                  style={styles.searchViewButton}
+                  onClick={askInbox}
+                  disabled={isSearching}
+                >
+                  {isSearching ? (
+                    <RefreshCw size={18} className="spin" />
+                  ) : (
+                    "Search"
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {aiAnswer && (
+              <div style={styles.aiAnswerLarge}>
+                <div style={styles.aiAnswerHeader}>
+                  <Sparkles size={18} color="#8b5cf6" />
+                  <span style={{ fontSize: "16px" }}>InboxIQ Answer</span>
+                </div>
+                <p style={styles.aiAnswerTextLarge}>{aiAnswer}</p>
+              </div>
+            )}
+
+            <div style={styles.searchResultsGrid}>
+              {searchResults.map((email) => (
+                <div key={email._id} style={styles.searchResultCard}>
+                  <div style={styles.searchResultHeader}>
+                    <div style={styles.searchResultMeta}>
+                      <span style={styles.searchResultFrom}>
+                        {email.from?.split("<")[0] || email.from}
+                      </span>
+                      <span style={styles.searchResultDate}>
+                        {new Date(email.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <h3 style={styles.searchResultSubject}>{email.subject}</h3>
+                  </div>
+                  <p style={styles.searchResultSnippet}>
+                    {email.body?.substring(0, 200).replace(/<[^>]*>/g, "")}...
+                  </p>
+                  <div style={styles.searchResultActions}>
                     <button
-                      style={styles.generateButton}
-                      onClick={generateReply}
-                      disabled={isGeneratingReply}
+                      style={styles.viewEmailButton}
+                      onClick={() => {
+                        setSelectedEmail(email);
+                        setView("inbox");
+                      }}
                     >
-                      {isGeneratingReply ? "Generating..." : "Generate"}
+                      View Full Email
+                    </button>
+                    <button
+                      style={styles.replySearchButton}
+                      onClick={() => {
+                        setSelectedEmail(email);
+                        setView("inbox");
+                        setTimeout(() => generateReply(), 500);
+                      }}
+                    >
+                      AI Reply
                     </button>
                   </div>
                 </div>
-
-                {aiReply && (
-                  <div style={styles.aiReplyContent}>
-                    <div style={styles.replyDraftHeader}>Draft Reply</div>
-                    <pre style={styles.replyText}>{aiReply.reply}</pre>
-                    <div style={styles.replyActions}>
-                      <button
-                        style={styles.copyButton}
-                        onClick={() =>
-                          navigator.clipboard.writeText(aiReply.reply)
-                        }
-                      >
-                        Copy to Clipboard
-                      </button>
-                      <button
-                        style={styles.sendButton}
-                        onClick={() =>
-                          sendEmail(
-                            aiReply.replyTo,
-                            aiReply.subject,
-                            aiReply.reply,
-                          )
-                        }
-                        disabled={isSendingEmail}
-                      >
-                        <Send size={14} />
-                        {isSendingEmail ? "Sending..." : "Send Reply"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
-          ) : (
-            <div style={styles.detailPlaceholder}>
-              <Mail size={48} color="#e4e4e7" />
-              <p>Select an email to view details</p>
-            </div>
-          )}
-        </section>
+          </section>
+        )}
       </main>
 
       {/* COMPOSE MODAL */}
@@ -580,6 +985,19 @@ export default function Dashboard() {
               />
             </div>
             <div style={styles.modalFooter}>
+              <button
+                style={{ ...styles.copyButton, marginRight: "auto" }}
+                onClick={() =>
+                  saveDraft(
+                    composeData.to,
+                    composeData.subject,
+                    composeData.body,
+                  )
+                }
+                disabled={isSavingDraft}
+              >
+                {isSavingDraft ? "Saving..." : "Save as Draft"}
+              </button>
               <button
                 style={styles.modalSendButton}
                 onClick={() =>
@@ -893,6 +1311,97 @@ const styles = {
     cursor: "pointer",
     marginLeft: "16px",
   },
+  resendButton: {
+    padding: "6px 12px",
+    backgroundColor: "#18181b",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: "600",
+    cursor: "pointer",
+    marginLeft: "12px",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
+  bulkActionBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    backgroundColor: "#f3f4f6",
+    padding: "6px 12px",
+    borderRadius: "8px",
+  },
+  bulkActionText: {
+    fontSize: "12px",
+    fontWeight: "600",
+    color: "#4b5563",
+  },
+  bulkActionButton: {
+    background: "none",
+    border: "none",
+    fontSize: "12px",
+    fontWeight: "700",
+    color: "#18181b",
+    cursor: "pointer",
+    padding: "4px 8px",
+  },
+  categoryFilters: {
+    display: "flex",
+    gap: "8px",
+    padding: "0 20px 16px 20px",
+    borderBottom: "1px solid #f3f4f6",
+    overflowX: "auto",
+  },
+  categoryBtn: {
+    padding: "6px 12px",
+    borderRadius: "20px",
+    fontSize: "12px",
+    fontWeight: "600",
+    color: "#6b7280",
+    backgroundColor: "#f3f4f6",
+    border: "none",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    transition: "all 0.2s",
+  },
+  categoryBtnActive: {
+    backgroundColor: "#18181b",
+    color: "white",
+  },
+  categoryTag: {
+    fontSize: "10px",
+    fontWeight: "700",
+    textTransform: "uppercase",
+    padding: "2px 6px",
+    borderRadius: "4px",
+    backgroundColor: "#e5e7eb",
+    color: "#4b5563",
+    marginRight: "8px",
+    display: "inline-block",
+  },
+  selectAllContainer: {
+    padding: "12px 20px",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    borderBottom: "1px solid #f3f4f6",
+    backgroundColor: "#f9fafb",
+  },
+  selectAllText: {
+    fontSize: "12px",
+    fontWeight: "600",
+    color: "#6b7280",
+  },
+  checkbox: {
+    width: "16px",
+    height: "16px",
+    cursor: "pointer",
+  },
+  emailItemSelected: {
+    backgroundColor: "#f0f9ff",
+  },
   detailMeta: {
     display: "flex",
     flexDirection: "column",
@@ -921,6 +1430,50 @@ const styles = {
     width: "100%",
     border: "none",
     overflow: "hidden",
+  },
+  attachmentsSection: {
+    margin: "20px 0",
+    padding: "16px",
+    backgroundColor: "#f9fafb",
+    borderRadius: "12px",
+    border: "1px solid #e5e7eb",
+  },
+  attachmentsHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#4b5563",
+    marginBottom: "12px",
+  },
+  attachmentsList: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px",
+  },
+  attachmentItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "8px 12px",
+    backgroundColor: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: "8px",
+    fontSize: "12px",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
+  attachmentName: {
+    fontWeight: "500",
+    color: "#18181b",
+    maxWidth: "150px",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  attachmentSize: {
+    color: "#9ca3af",
   },
   aiReplySection: {
     border: "1px solid #e5e7eb",
@@ -1082,6 +1635,150 @@ const styles = {
     border: "none",
     borderRadius: "6px",
     fontSize: "14px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  searchViewSection: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    padding: "40px",
+    overflowY: "auto",
+    backgroundColor: "#f9fafb",
+  },
+  searchContainer: {
+    maxWidth: "800px",
+    margin: "100px auto 40px",
+    width: "100%",
+    textAlign: "center",
+    transition: "margin 0.3s ease",
+  },
+  searchContainerResults: {
+    margin: "0 auto 40px",
+  },
+  searchViewTitle: {
+    fontSize: "32px",
+    fontWeight: "800",
+    marginBottom: "24px",
+    color: "#18181b",
+  },
+  searchBarLarge: {
+    display: "flex",
+    alignItems: "center",
+    backgroundColor: "white",
+    borderRadius: "16px",
+    padding: "8px 16px",
+    boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
+    border: "1px solid #e5e7eb",
+  },
+  searchInputLarge: {
+    flex: 1,
+    border: "none",
+    padding: "16px",
+    fontSize: "16px",
+    outline: "none",
+  },
+  searchViewButton: {
+    padding: "12px 24px",
+    backgroundColor: "#8b5cf6",
+    color: "white",
+    border: "none",
+    borderRadius: "10px",
+    fontSize: "15px",
+    fontWeight: "600",
+    cursor: "pointer",
+    transition: "background-color 0.2s",
+  },
+  aiAnswerLarge: {
+    maxWidth: "800px",
+    margin: "0 auto 40px",
+    width: "100%",
+    padding: "24px",
+    backgroundColor: "white",
+    borderRadius: "16px",
+    border: "1px solid #ddd6fe",
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05)",
+  },
+  aiAnswerTextLarge: {
+    fontSize: "15px",
+    lineHeight: "1.7",
+    color: "#1e1b4b",
+    margin: "12px 0 0 0",
+  },
+  searchResultsGrid: {
+    maxWidth: "1000px",
+    margin: "0 auto",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(450px, 1fr))",
+    gap: "24px",
+    paddingBottom: "40px",
+  },
+  searchResultCard: {
+    backgroundColor: "white",
+    padding: "24px",
+    borderRadius: "16px",
+    border: "1px solid #e5e7eb",
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px",
+    boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
+    transition: "transform 0.2s",
+  },
+  searchResultHeader: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  searchResultMeta: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  searchResultFrom: {
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#8b5cf6",
+  },
+  searchResultDate: {
+    fontSize: "12px",
+    color: "#9ca3af",
+  },
+  searchResultSubject: {
+    fontSize: "18px",
+    fontWeight: "700",
+    margin: 0,
+    color: "#18181b",
+  },
+  searchResultSnippet: {
+    fontSize: "14px",
+    lineHeight: "1.5",
+    color: "#4b5563",
+    margin: 0,
+  },
+  searchResultActions: {
+    marginTop: "auto",
+    display: "flex",
+    gap: "12px",
+  },
+  viewEmailButton: {
+    flex: 1,
+    padding: "10px",
+    backgroundColor: "#f3f4f6",
+    color: "#18181b",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
+    fontWeight: "600",
+    cursor: "pointer",
+  },
+  replySearchButton: {
+    flex: 1,
+    padding: "10px",
+    backgroundColor: "#18181b",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "13px",
     fontWeight: "600",
     cursor: "pointer",
   },
