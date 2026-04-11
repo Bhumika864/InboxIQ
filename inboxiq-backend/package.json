@@ -4,7 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "check:env": "node -r dotenv/config -e \"require('./config/env').validateEnv(); console.log('Environment OK');\"",
+    "migrate:indexes": "node scripts/migrateEmailIndexes.js",
+    "test": "jest --runInBand"
   },
   "keywords": [],
   "author": "",
@@ -17,15 +21,20 @@
     "crypto-js": "^4.2.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.3.2",
     "express-session": "^1.19.0",
     "googleapis": "^171.4.0",
     "groq-sdk": "^0.37.0",
+    "helmet": "^8.1.0",
     "html-to-text": "^9.0.5",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.2.3",
+    "morgan": "^1.10.1",
     "openai": "^6.22.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "jest": "^30.3.0",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.2.2"
   }
 }

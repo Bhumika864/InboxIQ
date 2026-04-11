@@ -10,6 +10,7 @@ const scopes = [
   "email",
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.modify",
 ];
 
 // Helper to generate JWT
@@ -22,6 +23,10 @@ const generateToken = (email) => {
 // =====================
 // STEP 1: Redirect to Google Login
 // =====================
+router.get("/login", (req, res) => {
+  res.redirect("/auth/google");
+});
+
 router.get("/google", (req, res) => {
   const url = oauth2Client.generateAuthUrl({
     access_type: "offline",
@@ -51,7 +56,7 @@ router.get("/google/callback", async (req, res, next) => {
     const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
     const { data } = await oauth2.userinfo.get();
 
-    const email = data.email;
+    const email = String(data.email).toLowerCase();
 
     // Save or update user in DB
     const user = await User.findOneAndUpdate(

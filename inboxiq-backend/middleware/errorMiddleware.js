@@ -8,8 +8,12 @@ const errorHandler = (err, req, res, next) => {
 
   const statusCode = err.statusCode || (res.statusCode === 200 ? 500 : res.statusCode);
   const isProduction = process.env.NODE_ENV === "production";
+  const isTest = process.env.NODE_ENV === "test";
 
-  console.error(`[ERROR] ${req.method} ${req.originalUrl} -> ${statusCode}:`, err.message);
+  // Keep test output clean: skip expected 4xx noise during test runs.
+  if (!(isTest && statusCode < 500)) {
+    console.error(`[ERROR] ${req.method} ${req.originalUrl} -> ${statusCode}:`, err.message);
+  }
 
   return res.status(statusCode).json({
     message: statusCode >= 500 && isProduction ? "Internal Server Error" : (err.message || "Internal Server Error"),

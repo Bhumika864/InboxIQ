@@ -20,24 +20,26 @@ const protect = async (req, res, next) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || "inboxiq_jwt_secret");
 
       // Get user from the token and attach to request object (exclude tokens)
-      req.user = await User.findOne({ email: decoded.email }).select("-accessToken -refreshToken");
+      req.user = await User.findOne({
+        email: String(decoded.email).toLowerCase(),
+      }).select("-accessToken -refreshToken");
 
       if (!req.user) {
         res.status(401);
-        throw new Error("User not found");
+        return next(new Error("User not found"));
       }
 
-      next();
+      return next();
     } catch (error) {
       console.error("Auth middleware error:", error.message);
       res.status(401);
-      next(new Error("Not authorized, token failed"));
+      return next(new Error("Not authorized, token failed"));
     }
   }
 
   if (!token) {
     res.status(401);
-    next(new Error("Not authorized, no token"));
+    return next(new Error("Not authorized, no token"));
   }
 };
 
