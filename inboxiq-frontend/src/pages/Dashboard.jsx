@@ -18,8 +18,7 @@ import {
   Trash2,
   RotateCcw,
 } from "lucide-react";
-
-const API_BASE_URL = "http://localhost:5000";
+import { API_BASE_URL } from "../config/api";
 
 export default function Dashboard() {
   const [emails, setEmails] = useState([]);

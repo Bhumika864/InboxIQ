@@ -1,8 +1,8 @@
 import React, { useState } from "react";
+import { API_BASE_URL } from "../config/api";
 
 export default function Login() {
   const [hovered, setHovered] = useState(false);
-  const API_BASE_URL = "http://localhost:5000";
 
   const handleLogin = () => {
     const redirectOrigin = encodeURIComponent(window.location.origin);
