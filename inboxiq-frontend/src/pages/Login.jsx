@@ -2,9 +2,11 @@ import React, { useState } from "react";
 
 export default function Login() {
   const [hovered, setHovered] = useState(false);
+  const API_BASE_URL = "http://localhost:5000";
 
   const handleLogin = () => {
-    window.location.href = "http://localhost:5000/auth/google";
+    const redirectOrigin = encodeURIComponent(window.location.origin);
+    window.location.href = `${API_BASE_URL}/auth/google?redirectOrigin=${redirectOrigin}`;
   };
 
   return (

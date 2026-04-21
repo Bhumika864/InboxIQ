@@ -385,32 +385,50 @@ export default function Dashboard() {
         setEmails((prev) =>
           prev.map((e) =>
             selectedEmails.includes(e.messageId)
-              ? { ...e, labelIds: [...(e.labelIds || []).filter((l) => l !== "INBOX"), "TRASH"] }
-              : e
-          )
+              ? {
+                  ...e,
+                  labelIds: [
+                    ...(e.labelIds || []).filter((l) => l !== "INBOX"),
+                    "TRASH",
+                  ],
+                }
+              : e,
+          ),
         );
       } else if (action === "archive") {
         setEmails((prev) =>
           prev.map((e) =>
             selectedEmails.includes(e.messageId)
-              ? { ...e, labelIds: (e.labelIds || []).filter((l) => l !== "INBOX") }
-              : e
-          )
+              ? {
+                  ...e,
+                  labelIds: (e.labelIds || []).filter((l) => l !== "INBOX"),
+                }
+              : e,
+          ),
         );
       } else if (action === "restore") {
         setEmails((prev) =>
           prev.map((e) =>
             selectedEmails.includes(e.messageId)
-              ? { ...e, labelIds: [...(e.labelIds || []).filter((l) => l !== "TRASH"), "INBOX"] }
-              : e
-          )
+              ? {
+                  ...e,
+                  labelIds: [
+                    ...(e.labelIds || []).filter((l) => l !== "TRASH"),
+                    "INBOX",
+                  ],
+                }
+              : e,
+          ),
         );
       }
       setSelectedEmails([]);
       if (selectedEmail && selectedEmails.includes(selectedEmail.messageId))
         setSelectedEmail(null);
     } catch (err) {
-      const msg = err?.response?.data?.message || err.message || `Failed to ${action} emails.`;
+      const msg =
+        err?.response?.data?.message ||
+        err.message ||
+        `Failed to ${action} emails.`;
       alert(msg);
     }
   };
@@ -427,30 +445,48 @@ export default function Dashboard() {
         setEmails((prev) =>
           prev.map((e) =>
             e.messageId === messageId
-              ? { ...e, labelIds: [...(e.labelIds || []).filter((l) => l !== "INBOX"), "TRASH"] }
-              : e
-          )
+              ? {
+                  ...e,
+                  labelIds: [
+                    ...(e.labelIds || []).filter((l) => l !== "INBOX"),
+                    "TRASH",
+                  ],
+                }
+              : e,
+          ),
         );
       } else if (action === "archive") {
         setEmails((prev) =>
           prev.map((e) =>
             e.messageId === messageId
-              ? { ...e, labelIds: (e.labelIds || []).filter((l) => l !== "INBOX") }
-              : e
-          )
+              ? {
+                  ...e,
+                  labelIds: (e.labelIds || []).filter((l) => l !== "INBOX"),
+                }
+              : e,
+          ),
         );
       } else if (action === "restore") {
         setEmails((prev) =>
           prev.map((e) =>
             e.messageId === messageId
-              ? { ...e, labelIds: [...(e.labelIds || []).filter((l) => l !== "TRASH"), "INBOX"] }
-              : e
-          )
+              ? {
+                  ...e,
+                  labelIds: [
+                    ...(e.labelIds || []).filter((l) => l !== "TRASH"),
+                    "INBOX",
+                  ],
+                }
+              : e,
+          ),
         );
       }
       setSelectedEmail(null);
     } catch (err) {
-      const msg = err?.response?.data?.message || err.message || `Failed to ${action} email.`;
+      const msg =
+        err?.response?.data?.message ||
+        err.message ||
+        `Failed to ${action} email.`;
       alert(msg);
     }
   };
@@ -552,15 +588,19 @@ export default function Dashboard() {
 
           <nav style={s.nav}>
             {[
-            { id: "inbox", label: "Inbox", icon: <Inbox size={16} /> },
-            { id: "search", label: "Search", icon: <Search size={16} /> },
-            { id: "sent", label: "Sent", icon: <Send size={16} /> },
-            { id: "archive", label: "Archive", icon: <Archive size={16} /> },
-            { id: "bin", label: "Bin", icon: <Trash2 size={16} /> },
-          ].map(({ id, label, icon }) => (
+              { id: "inbox", label: "Inbox", icon: <Inbox size={16} /> },
+              { id: "search", label: "Search", icon: <Search size={16} /> },
+              { id: "sent", label: "Sent", icon: <Send size={16} /> },
+              { id: "archive", label: "Archive", icon: <Archive size={16} /> },
+              { id: "bin", label: "Bin", icon: <Trash2 size={16} /> },
+            ].map(({ id, label, icon }) => (
               <button
                 key={id}
-                style={{ ...s.navBtn, ...(view === id ? s.navBtnActive : {}), ...(id === "bin" ? s.navBtnBin : {}) }}
+                style={{
+                  ...s.navBtn,
+                  ...(view === id ? s.navBtnActive : {}),
+                  ...(id === "bin" ? s.navBtnBin : {}),
+                }}
                 onClick={() => {
                   setView(id);
                   setSelectedEmail(null);
@@ -600,7 +640,10 @@ export default function Dashboard() {
 
       {/* ── MAIN ── */}
       <main style={s.main}>
-        {view === "inbox" || view === "sent" || view === "archive" || view === "bin" ? (
+        {view === "inbox" ||
+        view === "sent" ||
+        view === "archive" ||
+        view === "bin" ? (
           <>
             {/* EMAIL LIST */}
             <section style={s.listPane}>
@@ -608,7 +651,13 @@ export default function Dashboard() {
               <div style={s.listHeader}>
                 <div style={s.listTitleRow}>
                   <h2 style={s.listTitle}>
-                    {view === "inbox" ? "Inbox" : view === "sent" ? "Sent" : view === "archive" ? "Archive" : "Bin"}
+                    {view === "inbox"
+                      ? "Inbox"
+                      : view === "sent"
+                        ? "Sent"
+                        : view === "archive"
+                          ? "Archive"
+                          : "Bin"}
                   </h2>
                   {selectedEmails.length > 0 && (
                     <div style={s.bulkBar}>
@@ -676,26 +725,26 @@ export default function Dashboard() {
 
                 {/* Category filters — only for inbox/sent */}
                 {(view === "inbox" || view === "sent") && (
-                <div style={s.filters}>
-                  {[
-                    "All",
-                    "Important",
-                    "Promotions",
-                    "Social",
-                    "Newsletters",
-                  ].map((cat) => (
-                    <button
-                      key={cat}
-                      style={{
-                        ...s.filterBtn,
-                        ...(activeCategory === cat ? s.filterBtnActive : {}),
-                      }}
-                      onClick={() => setActiveCategory(cat)}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
+                  <div style={s.filters}>
+                    {[
+                      "All",
+                      "Important",
+                      "Promotions",
+                      "Social",
+                      "Newsletters",
+                    ].map((cat) => (
+                      <button
+                        key={cat}
+                        style={{
+                          ...s.filterBtn,
+                          ...(activeCategory === cat ? s.filterBtnActive : {}),
+                        }}
+                        onClick={() => setActiveCategory(cat)}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
 
@@ -738,9 +787,19 @@ export default function Dashboard() {
 
                 {filteredEmails.length === 0 ? (
                   <div style={s.emptyState}>
-                    {view === "archive" ? <Archive size={32} color="#1e293b" /> : view === "bin" ? <Trash2 size={32} color="#1e293b" /> : <Mail size={32} color="#1e293b" />}
+                    {view === "archive" ? (
+                      <Archive size={32} color="#1e293b" />
+                    ) : view === "bin" ? (
+                      <Trash2 size={32} color="#1e293b" />
+                    ) : (
+                      <Mail size={32} color="#1e293b" />
+                    )}
                     <p>
-                      {view === "archive" ? "No archived emails" : view === "bin" ? "Bin is empty" : "No emails in this category"}
+                      {view === "archive"
+                        ? "No archived emails"
+                        : view === "bin"
+                          ? "Bin is empty"
+                          : "No emails in this category"}
                     </p>
                   </div>
                 ) : (
@@ -799,6 +858,7 @@ export default function Dashboard() {
                         </div>
                         <span style={s.emailDate}>
                           {new Date(email.createdAt).toLocaleDateString()}
+                         
                         </span>
                       </div>
 
@@ -885,7 +945,12 @@ export default function Dashboard() {
                       {(view === "inbox" || view === "sent") && (
                         <button
                           style={s.ghostBtn}
-                          onClick={() => handleSingleAction("archive", selectedEmail.messageId)}
+                          onClick={() =>
+                            handleSingleAction(
+                              "archive",
+                              selectedEmail.messageId,
+                            )
+                          }
                           title="Archive"
                         >
                           <Archive size={12} /> Archive
@@ -895,7 +960,12 @@ export default function Dashboard() {
                       {view !== "bin" && (
                         <button
                           style={{ ...s.ghostBtn, color: "#f87171" }}
-                          onClick={() => handleSingleAction("delete", selectedEmail.messageId)}
+                          onClick={() =>
+                            handleSingleAction(
+                              "delete",
+                              selectedEmail.messageId,
+                            )
+                          }
                           title="Move to Bin"
                         >
                           <Trash2 size={12} /> Delete
@@ -905,27 +975,33 @@ export default function Dashboard() {
                       {(view === "archive" || view === "bin") && (
                         <button
                           style={{ ...s.ghostBtn, color: "#34d399" }}
-                          onClick={() => handleSingleAction("restore", selectedEmail.messageId)}
+                          onClick={() =>
+                            handleSingleAction(
+                              "restore",
+                              selectedEmail.messageId,
+                            )
+                          }
                           title="Restore to Inbox"
                         >
                           <RotateCcw size={12} /> Restore
                         </button>
                       )}
-                      {selectedEmail.from?.includes(userEmail) && view !== "bin" && (
-                        <button
-                          style={s.ghostBtn}
-                          onClick={() => {
-                            setComposeData({
-                              to: selectedEmail.to || "",
-                              subject: selectedEmail.subject,
-                              body: selectedEmail.body,
-                            });
-                            setShowCompose(true);
-                          }}
-                        >
-                          <RefreshCw size={12} /> Resend
-                        </button>
-                      )}
+                      {selectedEmail.from?.includes(userEmail) &&
+                        view !== "bin" && (
+                          <button
+                            style={s.ghostBtn}
+                            onClick={() => {
+                              setComposeData({
+                                to: selectedEmail.to || "",
+                                subject: selectedEmail.subject,
+                                body: selectedEmail.body,
+                              });
+                              setShowCompose(true);
+                            }}
+                          >
+                            <RefreshCw size={12} /> Resend
+                          </button>
+                        )}
                       {selectedEmail.html && (
                         <button
                           style={s.ghostBtn}
@@ -991,12 +1067,15 @@ export default function Dashboard() {
                             const doc = e.target.contentWindow.document;
                             const emailRoot = doc.getElementById("email-root");
                             const measuredHeight = emailRoot
-                              ? Math.ceil(emailRoot.getBoundingClientRect().height) + 40
+                              ? Math.ceil(
+                                  emailRoot.getBoundingClientRect().height,
+                                ) + 40
                               : Math.max(
                                   doc.body?.scrollHeight || 0,
                                   doc.documentElement?.scrollHeight || 0,
                                 );
-                            e.target.style.height = Math.max(measuredHeight, 220) + "px";
+                            e.target.style.height =
+                              Math.max(measuredHeight, 220) + "px";
                           } catch {
                             e.target.style.height = "300px";
                           }

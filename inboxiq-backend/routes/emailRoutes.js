@@ -9,7 +9,6 @@ const { validateRequiredFields } = require("../middleware/validationMiddleware")
 
 const User = require("../models/User");
 const Email = require("../models/Email");
-
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // =====================
@@ -104,6 +103,34 @@ function cleanEmailText(rawText) {
     .replace(/[^\S\r\n]{2,}/g, " ")
     .replace(/(\r?\n){3,}/g, "\n\n")
     .trim();
+}
+
+function buildEmailEmbeddingInput({ subject = "", from = "", snippet = "", body = "" }) {
+  const cleanSubject = String(subject || "").trim();
+  const cleanFrom = String(from || "").trim();
+  const cleanSnippet = String(snippet || "").trim();
+  const cleanBody = String(body || "").trim();
+
+  return [
+    `Subject: ${cleanSubject}`,
+    `From: ${cleanFrom}`,
+    `Snippet: ${cleanSnippet}`,
+    `Subject: ${cleanSubject}`,
+    `From: ${cleanFrom}`,
+    `Body: ${cleanBody}`,
+  ]
+    .join(" ")
+    .trim() || "Empty email";
+}
+
+async function createEmailEmbedding(emailData) {
+  const embedding = await embed(buildEmailEmbeddingInput(emailData));
+
+  if (!Array.isArray(embedding) || embedding.length === 0) {
+    throw new Error("Embedding model returned an empty vector");
+  }
+
+  return embedding;
 }
 
 function getAuthorizedEmail(req) {
@@ -274,9 +301,7 @@ router.get("/sync/:email", heavyOpsLimiter, async (req, res, next) => {
         const attachments = extractAttachments(full.data.payload);
 
         console.log(`[Sync] Embedding & Saving: ${subject.substring(0, 30)}`);
-        // Weight subject and sender more heavily by repeating them in the embedding input
-        const embeddingInput = `Subject: ${subject} From: ${from} Snippet: ${snippet} Subject: ${subject} From: ${from} Body: ${body}`;
-        const embedding = await embed(embeddingInput);
+        const embedding = await createEmailEmbedding({ subject, from, snippet, body });
         const category = await categorizeEmail(subject, body);
 
         await Email.updateOne(
@@ -596,6 +621,54 @@ router.post(
   });
 
 // =====================
+// BACKFILL MISSING EMBEDDINGS
+// =====================
+router.post("/embed-missing", heavyOpsLimiter, async (req, res, next) => {
+  try {
+    const userEmail = assertEmailAccess(req, req.body?.email);
+    const emails = await Email.find({
+      userEmail,
+      $or: [
+        { embedding: { $exists: false } },
+        { embedding: { $size: 0 } },
+        { embedding: null },
+      ],
+    });
+
+    let embedded = 0;
+    let failed = 0;
+
+    for (const email of emails) {
+      try {
+        email.embedding = await createEmailEmbedding({
+          subject: email.subject,
+          from: email.from,
+          snippet: email.snippet,
+          body: email.body,
+        });
+        await email.save();
+        embedded += 1;
+      } catch (embedErr) {
+        failed += 1;
+        console.error(
+          `[EmbedMissing] Failed for ${email.messageId}:`,
+          embedErr.message
+        );
+      }
+    }
+
+    res.json({
+      message: "Embedding backfill completed",
+      checked: emails.length,
+      embedded,
+      failed,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =====================
 // GENERATE AI REPLY
 // =====================
 router.post(
@@ -700,9 +773,11 @@ router.post(
       });
 
       // Save to local database immediately so it shows in the "Sent" section
-      // Weight subject and sender more heavily by repeating them in the embedding input
-      const embeddingInput = `Subject: ${subject} From: ${authorizedEmail} Subject: ${subject} From: ${authorizedEmail} Body: ${body}`;
-      const embedding = await embed(embeddingInput);
+      const embedding = await createEmailEmbedding({
+        subject,
+        from: authorizedEmail,
+        body,
+      });
       const category = await categorizeEmail(subject, body);
 
       await Email.create({
