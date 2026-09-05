@@ -19,6 +19,7 @@ const defaultOrigins = [
   "http://localhost:5174",
   "http://localhost:5175",
   "http://localhost:5176",
+  "https://inbox-iq-frontend.vercel.app",
 ];
 
 const envOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "")
@@ -55,7 +56,7 @@ router.get("/login", (req, res) => {
 
 router.get("/google", (req, res) => {
   const requestedOrigin = normalizeAllowedOrigin(req.query.redirectOrigin);
-  const defaultOrigin = normalizeAllowedOrigin(process.env.FRONTEND_URL) || "http://localhost:5173";
+  const defaultOrigin = normalizeAllowedOrigin(process.env.FRONTEND_URL) || "https://inbox-iq-frontend.vercel.app";
   const redirectOrigin = requestedOrigin || defaultOrigin;
 
   const url = oauth2Client.generateAuthUrl({
@@ -107,7 +108,7 @@ router.get("/google/callback", async (req, res, next) => {
 
     // Resolve callback destination from OAuth state with allowlist validation.
     const requestedOrigin = normalizeAllowedOrigin(req.query.state);
-    const fallbackOrigin = normalizeAllowedOrigin(process.env.FRONTEND_URL) || "http://localhost:5173";
+    const fallbackOrigin = normalizeAllowedOrigin(process.env.FRONTEND_URL) || "https://inbox-iq-frontend.vercel.app";
     const frontendUrl = new URL(requestedOrigin || fallbackOrigin);
     frontendUrl.searchParams.set("token", token);
     frontendUrl.searchParams.set("email", email);

@@ -32,6 +32,7 @@ const createApp = () => {
     "http://localhost:5174",
     "http://localhost:5175",
     "http://localhost:5176",
+    "https://inbox-iq-frontend.vercel.app",
   ];
 
   const envOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || "")
